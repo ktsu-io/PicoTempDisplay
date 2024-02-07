@@ -5,7 +5,10 @@
 #include <WiFiUdp.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
-#include <deque>
+#include <string>
+#include <sstream>
+#include <vector>
+#include <map>
 
 U8G2_SH1107_64X128_F_4W_SW_SPI u8g2(U8G2_R1, 10, 11, 9, 8, 12);
 
@@ -18,7 +21,21 @@ const char* wifiName;
 const char* wifiPassword;
 int port;
 
-std::deque<std::string> temps;
+std::map<std::string, float> prevTempsFloat;
+std::map<std::string, float> tempsFloat;
+std::map<std::string, std::string> temps;
+
+//https://stackoverflow.com/a/27511119
+std::vector<std::string> split(const std::string &s, char delim) {
+  std::stringstream ss(s);
+  std::string item;
+  std::vector<std::string> elems;
+  while (std::getline(ss, item, delim)) {
+    //elems.push_back(item);
+    elems.push_back(std::move(item)); // if C++11 (based on comment from @mchiasson)
+  }
+  return elems;
+}
 
 void setup() {
   Serial.begin();
@@ -64,7 +81,6 @@ void setup() {
 
 char packetBuffer[UDP_TX_PACKET_MAX_SIZE + 1];
 
-double i = 0;
 void loop() {
   int packetSize = udp.parsePacket();
   if (packetSize)
@@ -72,18 +88,59 @@ void loop() {
     // read the packet into packetBufffer
     int n = udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
     packetBuffer[n] = 0;
-    temps.push_front(packetBuffer);
+
+    std::string packet(packetBuffer);
+    std::vector<std::string> parts = split(packet, ' ');
+    if(parts.size() >= 2)
+    {
+      auto& zone = parts[0];
+      auto& tempStr = parts[1];
+      float tempFloat = atof(tempStr.c_str());
+      float prevTempFloat = tempsFloat[zone];
+      if(tempFloat != prevTempFloat)
+      {
+        prevTempsFloat[zone] = prevTempFloat;
+      }
+      tempsFloat[zone] = tempFloat;
+      temps[zone] = tempStr;
+    }
   }
-  temps.resize(4);
 
-  ++i;
-
+  
   u8g2.firstPage();
   do {
-    u8g2.setFont(u8g2_font_helvR12_tf);
-    for(int idx=0; idx < temps.size(); ++idx)
+    u8g2.setFont(u8g2_font_open_iconic_embedded_2x_t);
+    std::string indicator = "\u004E";
+    u8g2.drawStr(0, 64, indicator.c_str());
+    u8g2.setFont(u8g2_font_open_iconic_www_2x_t);
+    indicator = "\u0051";
+    u8g2.drawStr(20, 64, indicator.c_str());
+    if(!WiFi.isConnected())
     {
-      u8g2.drawStr(0, 16 * (idx + 1), temps[idx].c_str());
+      indicator = "\u004A";
+      u8g2.drawStr(20, 64, indicator.c_str());
+    }
+
+    int line = 1;
+    u8g2.setFont(u8g2_font_helvR10_tf);
+    for (const auto& [zone, tempStr]: temps) {
+      u8g2.drawStr(20, 14 * line++, std::string(tempStr + " " + zone).c_str());
+    }
+    line = 1;
+    u8g2.setFont(u8g2_font_open_iconic_arrow_2x_t);
+    for (const auto& [zone, tempStr]: temps) {
+      indicator = "\u004C";
+      float prev = prevTempsFloat[zone];
+      if(prev == 0)
+      {
+        indicator = "\u0057";
+      }
+      else if(prev < tempsFloat[zone])
+      {
+        indicator = "\u004F";
+      }
+
+      u8g2.drawStr(0, 16 * line++, indicator.c_str());
     }
   } while ( u8g2.nextPage() );
 }
